@@ -1,0 +1,7 @@
+build/
+sdkconfig
+sdkconfig.old
+sdkconfig.ci*
+.vscode/
+dependencies.lock
+main/keys.h

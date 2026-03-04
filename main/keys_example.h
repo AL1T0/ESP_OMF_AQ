@@ -1,0 +1,7 @@
+#define CDS_AUTH           "https://uswe.datahub.connect.aveva.com/identity/connect/token"
+#define CDS_OMF            "https://uswe.datahub.connect.aveva.com/api/v1/Tenants/<tenant_id>/Namespaces/<namespace_id>/omf"
+#define CLIENT_ID          "id"
+#define CLIENT_SECRET      "secret"
+#define OAUTH_SCOPE        "ocsapi"
+#define WIFI_SSID          "SSID"
+#define WIFI_PASS          "PASS"
