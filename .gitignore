@@ -3,5 +3,7 @@ sdkconfig
 sdkconfig.old
 sdkconfig.ci*
 .vscode/
+.clangd
 dependencies.lock
 main/keys.h
+managed_components/

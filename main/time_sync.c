@@ -38,7 +38,7 @@ void time_sync_init(void)
             ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
     #endif
     cfg.sync_cb = time_sync_notification_cb;
-    cfg.smooth_sync = true;
+    cfg.smooth_sync = false;
 
     ESP_LOGI(TAG_TS, "Initializing SNTP");
     esp_netif_sntp_init(&cfg);

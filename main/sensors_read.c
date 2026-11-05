@@ -1,57 +1,57 @@
-
 #include "headers.h"
+#include <math.h>
 
-const char *TAGs = "SENSORS_READ";
-SemaphoreHandle_t xSensorMutex = NULL; // Make sure this is declared in your sensors_read.c
+static const char *TAGs = "SENSORS_READ";
 
-void sensors_reading_task(void *pvParameters){
-    float temperature = 0.0, humidity = 0.0, pressure = 0.0;
-    measurement_t co2_value;
-    measurement_q_t measurement;
-    EventBits_t bits;
-    static const TickType_t data_publish_interval = pdMS_TO_TICKS(60000);
-    
-    while(1){
-        // Block until Wi-Fi is connected
-        xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+// MH-Z19 measuring range is 0-5000 ppm (some variants 10000); anything else is a bad frame
+#define CO2_MIN_PPM  0
+#define CO2_MAX_PPM  10000
 
-        // Get sensors readings every 60s
-        vTaskDelay(data_publish_interval);
+// Reads all sensors every DATA_PUBLISH_INTERVAL_MS and hands the sample to the
+// publisher. It never blocks on the network: xQueueOverwrite keeps only the
+// latest sample, so a slow or offline publisher can't stall this task.
+void sensors_reading_task(void *pvParameters)
+{
+    const TickType_t period = pdMS_TO_TICKS(DATA_PUBLISH_INTERVAL_MS);
+    TickType_t last_wake = xTaskGetTickCount();
 
-        // Try to take the sensor mutex before accessing any critical sensor resource
-        if (xSensorMutex != NULL) {
-            if (xSemaphoreTake(xSensorMutex, pdMS_TO_TICKS(2000))) {
+    while (1) {
+        // Fixed-rate schedule (no drift from the time spent reading)
+        vTaskDelayUntil(&last_wake, period);
 
-                // --- Begin critical section: all sensor reads below are thread-safe ---
+        measurement_q_t m = {0};
 
-                // Get BME280 measurements
-                bme280_read_temperature(bme280, &temperature);
-                bme280_read_humidity(bme280, &humidity);
-                bme280_read_pressure(bme280, &pressure);
-                ESP_LOGI(TAGs, "Temperature: %.3f °C", temperature);
-
-                measurement.temperature = temperature;
-                measurement.humidity = humidity;
-                measurement.pressure = pressure;
-
-                // Get CO2 reading
-                co2_value = getMeasurement(UART_MHZin);
-                measurement.co2 = co2_value.co2_ppm;
-                ESP_LOGI(TAGs, "CO2 level: %d ppm", co2_value.co2_ppm);
-
-                // Get light sensor status
-                int light = gpio_get_level(GPIO_LIGHT);
-                measurement.light_state = (light == 0);
-                ESP_LOGI(TAGs, "Light sensor input is (%d)", light == 0);      
-
-                //Send the data to the measurement queue
-                xQueueSend(measurement_queue, &measurement, portMAX_DELAY);
-
-                // --- End of critical section ---
-                xSemaphoreGive(xSensorMutex);
-            } else {
-                ESP_LOGW(TAGs, "sensors_reading_task: Failed to acquire sensor mutex!");
-            }
+        // BME280
+        float t = 0, h = 0, p = 0;
+        esp_err_t e1 = bme280_read_temperature(bme280, &t);
+        esp_err_t e2 = bme280_read_humidity(bme280, &h);
+        esp_err_t e3 = bme280_read_pressure(bme280, &p);
+        m.bme_valid = (e1 == ESP_OK && e2 == ESP_OK && e3 == ESP_OK &&
+                       isfinite(t) && isfinite(h) && isfinite(p)); // NaN would break the JSON
+        m.temperature = t;
+        m.humidity    = h;
+        m.pressure    = p;
+        if (m.bme_valid) {
+            ESP_LOGI(TAGs, "Temperature: %.2f C, Humidity: %.2f %%, Pressure: %.2f", t, h, p);
+        } else {
+            ESP_LOGW(TAGs, "BME280 read failed (%s/%s/%s)",
+                     esp_err_to_name(e1), esp_err_to_name(e2), esp_err_to_name(e3));
         }
+
+        // MH-Z19 (CO2)
+        measurement_t co2 = getMeasurement(UART_MHZin);
+        m.co2_valid = (co2.co2_ppm >= CO2_MIN_PPM && co2.co2_ppm <= CO2_MAX_PPM);
+        m.co2 = m.co2_valid ? (int16_t)co2.co2_ppm : 0;
+        if (m.co2_valid) {
+            ESP_LOGI(TAGs, "CO2 level: %d ppm", m.co2);
+        } else {
+            ESP_LOGW(TAGs, "CO2 read failed");
+        }
+
+        // Light sensor (active low)
+        m.light_state = (gpio_get_level(GPIO_LIGHT) == 0);
+        ESP_LOGI(TAGs, "Light: %d", m.light_state);
+
+        xQueueOverwrite(measurement_queue, &m);
     }
 }

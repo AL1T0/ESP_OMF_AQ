@@ -16,7 +16,6 @@
 	static const int REQUEST_CNT = 8;
 	static const int RESPONSE_CNT = 9;
 
-	static const int RX_BUF_SIZE = 1024;
 
 	uint8_t getppm[] = {0xff, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00};
 	uint8_t zerocalib[] = {0xff, 0x01, 0x87, 0x00, 0x00, 0x00, 0x00, 0x00};
@@ -75,37 +74,23 @@ void writeCommand(uint8_t cmd[], uint8_t port)
 
 void writeCommand_wait_resp(uint8_t cmd[], uint8_t *response, uint8_t port)
 {
-	int txBytes;
-	txBytes = uart_write_bytes(port, cmd, REQUEST_CNT);
-	uint8_t checksum = mhz19_checksum(cmd);
-	txBytes = uart_write_bytes(port, &checksum, (size_t)1);
+	// Discard stale/partial bytes so the reply we read starts at a frame boundary.
+	// Without this, one partial frame misaligns every later reading.
+	uart_flush_input(port);
+
+	uint8_t frame[9]; // 8 command bytes + checksum
+	memcpy(frame, cmd, REQUEST_CNT);
+	frame[REQUEST_CNT] = mhz19_checksum(cmd);
+	uart_write_bytes(port, (const char *)frame, sizeof(frame));
 
 	if (response != NULL)
 	{
-		int i = 0;
-
-		// LECTURA UART EN MODO ESPERA BLOQUEANTE, POOLING
-		static const char *RX_TASK_TAG = "RX_BLOCK";
-		esp_log_level_set(RX_TASK_TAG, ESP_LOG_INFO);
-		uint8_t* data = (uint8_t*) malloc(RX_BUF_SIZE+1);
-		while (i < WAIT_READ_TIMES) {
-			const int rxBytes = uart_read_bytes(port, data, RX_BUF_SIZE, WAIT_READ_DELAY / portTICK_PERIOD_MS);
-			if (rxBytes > 0) {
-				data[rxBytes] = 0;
-				//ESP_LOGI(RX_TASK_TAG, "Read %d bytes: '%s'", rxBytes, data);
-				//ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, data, rxBytes, ESP_LOG_INFO);
-				memcpy(response, data, RESPONSE_CNT);
-				//printf("info: sensor data received.");
-				free(data);
-				return;
-			} else {
-				i++;
-			}
+		// Wait for exactly one 9-byte reply (sensor answers in a few ms)
+		int rx = uart_read_bytes(port, response, RESPONSE_CNT, pdMS_TO_TICKS(WAIT_READ_TIMES * WAIT_READ_DELAY));
+		if (rx != RESPONSE_CNT) {
+			memset(response, 0, RESPONSE_CNT);
+			ESP_LOGW("MHZ19", "Incomplete response (%d/%d bytes)", rx, RESPONSE_CNT);
 		}
-		free(data);
-
-				printf("error: can't get MH-Z19 response.");
-				return;
 	}
 }
 

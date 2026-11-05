@@ -1,8 +1,8 @@
 | Supported Targets | ESP32 | ESP32-C2 | ESP32-C3 | ESP32-S2 | ESP32-S3 |
 | ----------------- | ----- | -------- | -------- | -------- | -------- |
 
-# ESP32 Air Quality IoT Sensor
-This application connects to a wireless network and publishes environmental data to the CONNECT Data Services platform by AVEVA.
+# ESP32 Environmental Monitoring IoT Sensor
+This application connects to a wireless network and publishes environmental data to the CONNECT data services platform by AVEVA.
 
 It reads temperature, humidity, and pressure from a BME280 sensor, carbon dioxide concentration from an MHZ19 sensor, and digital light status. The data is gathered every 60 seconds and then published using the OMF format over HTTP with an OAuth2 authentication flow.
 
@@ -35,6 +35,15 @@ To read atmospheric data it uses a standard I2C driver implementation for the BM
 
 ### MHZ19 Sensor
 To read CO2 it relies on UART communication parsing the serial output of the MHZ19 module.
+
+## Reliability
+The firmware is designed to run unattended for long periods:
+- The OMF connection is kept alive and reused, so there is one TLS handshake instead of one per minute and the heap does not fragment over time.
+- The OAuth2 token is refreshed at 80 % of its lifetime, retried with backoff on failure, and refreshed immediately if the server answers 401 or 403.
+- Wi-Fi reconnects forever with exponential backoff (1 s up to 30 s).
+- The sensor task never waits on the network, so a slow or offline connection cannot stall it.
+- Invalid readings (CO2 frame errors, BME280 failures) are left out of the OMF message instead of being sent as garbage.
+- A health task logs free heap every 10 minutes and reboots the board if no OMF message has been accepted for 20 minutes (`PUBLISH_STALL_RESTART_S` in `headers.h`).
 
 ## How to use
 ### Hardware Required
